@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<classpath>
+	<classpathentry kind="src" path="src"/>
+	<classpathentry kind="lib" path="build/classes/model/players/container/equipment/Z-FileSearcher.jar"/>
+	<classpathentry kind="lib" path="build/classes/model/players/container/inventory/Z-FileSearcher.jar"/>
+	<classpathentry kind="lib" path="build/classes/model/players/container/Z-FileSearcher.jar"/>
+	<classpathentry kind="lib" path="build/classes/model/players/item/functions/Z-FileSearcher.jar"/>
+	<classpathentry kind="lib" path="build/classes/model/players/item/Z-FileSearcher.jar"/>
+	<classpathentry kind="lib" path="build/classes/model/players/report/Z-FileSearcher.jar"/>
+	<classpathentry kind="lib" path="build/classes/model/players/Z-FileSearcher.jar"/>
+	<classpathentry kind="lib" path="libs/commons-compress-1.0.jar"/>
+	<classpathentry kind="lib" path="libs/javac++.jar"/>
+	<classpathentry kind="lib" path="libs/jdom-1.1.2.jar"/>
+	<classpathentry kind="lib" path="libs/jruby.jar"/>
+	<classpathentry kind="lib" path="libs/mysql-connector-java-5.1.20-bin.jar"/>
+	<classpathentry kind="lib" path="libs/xpp3_min-1.1.4c.jar"/>
+	<classpathentry kind="lib" path="libs/xpp3-1.1.4c.jar"/>
+	<classpathentry kind="lib" path="libs/xstream-1.4.1.jar"/>
+	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>
+	<classpathentry kind="output" path="bin"/>
+</classpath>

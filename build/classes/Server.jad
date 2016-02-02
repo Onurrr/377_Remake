@@ -1,0 +1,418 @@
+// Decompiled by Jad v1.5.8f. Copyright 2001 Pavel Kouznetsov.
+// Jad home page: http://www.kpdus.com/jad.html
+// Decompiler options: packimports(3) 
+// Source File Name:   Server.java
+
+package com.rs2;
+
+import com.rs2.cache.Cache;
+import com.rs2.cache.interfaces.RSInterface;
+import com.rs2.cache.object.GameObjectData;
+import com.rs2.cache.object.ObjectLoader;
+import com.rs2.model.World;
+import com.rs2.model.content.combat.CombatManager;
+import com.rs2.model.content.minigames.GroupMiniGame;
+import com.rs2.model.content.minigames.groupminigames.CastleWarsCounter;
+import com.rs2.model.content.skills.farming.Allotments;
+import com.rs2.model.content.skills.farming.Bushes;
+import com.rs2.model.content.skills.farming.Flowers;
+import com.rs2.model.content.skills.farming.FruitTree;
+import com.rs2.model.content.skills.farming.Herbs;
+import com.rs2.model.content.skills.farming.Hops;
+import com.rs2.model.content.skills.farming.SpecialPlantOne;
+import com.rs2.model.content.skills.farming.SpecialPlantTwo;
+import com.rs2.model.content.skills.farming.WoodTrees;
+import com.rs2.model.content.skills.fishing.FishingSpots;
+import com.rs2.model.npcs.Npc;
+import com.rs2.model.npcs.NpcLoader;
+import com.rs2.model.players.GlobalGroundItem;
+import com.rs2.model.players.HighscoresManager;
+import com.rs2.model.players.Player;
+import com.rs2.model.players.item.ItemDefinition;
+import com.rs2.model.players.item.ItemManager;
+import com.rs2.model.tick.Tick;
+import com.rs2.net.ActionSender;
+import com.rs2.net.DedicatedReactor;
+import com.rs2.net.packet.PacketManager;
+import com.rs2.util.Benchmark;
+import com.rs2.util.Benchmarks;
+import com.rs2.util.Misc;
+import com.rs2.util.PlayerSave;
+import com.rs2.util.ShutDownHook;
+import com.rs2.util.ShutdownWorldProcess;
+import com.rs2.util.XStreamUtil;
+import com.rs2.util.clip.Rangable;
+import com.rs2.util.clip.Region;
+import com.rs2.util.plugin.PluginManager;
+import com.rs2.util.sql.SQLEngine;
+import java.io.*;
+import java.net.*;
+import java.nio.channels.*;
+import java.util.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
+
+// Referenced classes of package com.rs2:
+//            Constants, HostGateway
+
+public class Server
+    implements Runnable
+{
+
+    private Server(String host, int port, int cycleRate)
+    {
+        this.host = host;
+        this.port = port;
+        this.cycleRate = cycleRate;
+    }
+
+    public static void main(String args[])
+    {
+        String host = "127.0.0.1";
+        int port = 43594;
+        int cycleRate = 600;
+        if(host.equals("199.59.162.80"))
+        {
+            System.out.println("Starting live server!");
+            Constants.DEVELOPER_MODE = false;
+            Constants.MYSQL_ENABLED = true;
+            Constants.SERVER_DEBUG = false;
+            Constants.HIGHSCORES_ENABLED = true;
+            Constants.ADMINS_CAN_INTERACT = false;
+            Constants.RSA_CHECK = true;
+            Constants.CLIENT_VERSION = 377;
+        }
+        setSingleton(new Server(host, port, cycleRate));
+        (new Thread(getSingleton())).start();
+    }
+
+    public static Queue getDisconnectedPlayers()
+    {
+        return disconnectedPlayers;
+    }
+
+    public void queueLogin(Player player)
+    {
+        loginQueue.add(player);
+    }
+
+    public void run()
+    {
+        try
+        {
+            Thread.currentThread().setName("ServerEngine");
+            System.setOut(new com.rs2.util.Misc.TimestampLogger(System.out));
+            System.setErr(new com.rs2.util.Misc.TimestampLogger(System.err, "./data/err.log"));
+            address = new InetSocketAddress(host, port);
+            System.out.println((new StringBuilder("Starting 2006scape ofc. on ")).append(address).append("...").toString());
+            Thread shutdownhook = new ShutDownHook();
+            Runtime.getRuntime().addShutdownHook(shutdownhook);
+            PacketManager.loadPackets();
+            Cache.load();
+            Misc.loadScripts(new File("./data/ruby/"));
+            XStreamUtil.loadAllFiles();
+            ItemDefinition.loadWeight();
+            RSInterface.load();
+            PluginManager.loadPlugins();
+            Region.load();
+            Rangable.load();
+            ObjectLoader objectLoader = new ObjectLoader();
+            objectLoader.load();
+            GameObjectData.init();
+            CombatManager.init();
+            startMinutesCounter();
+            GlobalGroundItem.initialize();
+            Npc.loadNpcDrops();
+            FishingSpots.spawnFishingSpots();
+            NpcLoader.loadAutoSpawn("./data/npcs/spawn-config.cfg");
+            HighscoresManager.load();
+            startup();
+            System.out.println("Online!");
+            while(!Thread.interrupted()) 
+                try
+                {
+                    cycle();
+                    sleep();
+                }
+                catch(Exception ex)
+                {
+                    PlayerSave.saveAllPlayers();
+                    ex.printStackTrace();
+                }
+        }
+        catch(Exception ex)
+        {
+            ex.printStackTrace();
+        }
+        PluginManager.close();
+    }
+
+    private void startup()
+        throws Exception
+    {
+        SQLEngine.setGameDatabase(new SQLEngine(8, "com.mysql.jdbc.Driver", "jdbc:mysql://199.59.162.80:9427/2006scape_game", "06server_admin", "@or#-/mp&~"));
+        SQLEngine.setForumDatabase(new SQLEngine(2, "com.mysql.jdbc.Driver", "", "admin06_b00mah3", "O1xS?rx%qEGS"));
+        selector = Selector.open();
+        serverChannel = ServerSocketChannel.open();
+        DedicatedReactor.setInstance(new DedicatedReactor(Selector.open()));
+        DedicatedReactor.getInstance().start();
+        serverChannel.configureBlocking(false);
+        serverChannel.socket().bind(address);
+        synchronized(DedicatedReactor.getInstance())
+        {
+            DedicatedReactor.getInstance().getSelector().wakeup();
+            serverChannel.register(DedicatedReactor.getInstance().getSelector(), 16);
+        }
+        cycleTimer = new com.rs2.util.Misc.Stopwatch();
+    }
+
+    public static void accept(SelectionKey key)
+        throws IOException
+    {
+        ServerSocketChannel serverChannel = (ServerSocketChannel)key.channel();
+        SocketChannel channel = serverChannel.accept();
+        if(channel == null)
+            return;
+        if(!HostGateway.enter(channel.socket().getInetAddress().getHostAddress()))
+        {
+            channel.close();
+            return;
+        } else
+        {
+            channel.configureBlocking(false);
+            SelectionKey newKey = channel.register(key.selector(), 1);
+            Player player = new Player(newKey);
+            newKey.attach(player);
+            return;
+        }
+    }
+
+    private void cycle()
+    {
+        int loggedIn = 0;
+        Benchmark b = Benchmarks.getBenchmark("loginQueue");
+        b.start();
+        while(!loginQueue.isEmpty() && loggedIn++ < 50) 
+        {
+            Player player = (Player)loginQueue.poll();
+            try
+            {
+                player.finishLogin();
+                player.setLoginStage(com.rs2.model.players.Player.LoginStages.LOGGED_IN);
+            }
+            catch(Exception ex)
+            {
+                player.disconnect();
+            }
+        }
+        b.stop();
+        b = Benchmarks.getBenchmark("handleNetworkPackets");
+        b.start();
+        try
+        {
+            selector.selectNow();
+            for(Iterator iterator = selector.selectedKeys().iterator(); iterator.hasNext();)
+            {
+                SelectionKey selectionKey = (SelectionKey)iterator.next();
+                if(selectionKey.isValid() && selectionKey.isReadable())
+                    PacketManager.handleIncomingData((Player)selectionKey.attachment());
+            }
+
+        }
+        catch(Exception ex)
+        {
+            ex.printStackTrace();
+        }
+        b.stop();
+        try
+        {
+            PluginManager.tick();
+            World.process();
+        }
+        catch(Exception ex)
+        {
+            ex.printStackTrace();
+        }
+        b = Benchmarks.getBenchmark("disconnectingPlayers");
+        b.start();
+        synchronized(disconnectedPlayers)
+        {
+            for(Iterator players = disconnectedPlayers.iterator(); players.hasNext();)
+            {
+                Player player = (Player)players.next();
+                if(!player.logoutDisabled())
+                {
+                    player.logout();
+                    players.remove();
+                }
+            }
+
+        }
+        b.stop();
+    }
+
+    private void sleep()
+    {
+        try
+        {
+            long sleepTime = (long)cycleRate - cycleTimer.elapsed();
+            boolean sleep = sleepTime > 0L && sleepTime < 600L;
+            for(int i = 0; i < 256; i++)
+            {
+                Benchmark b = PacketManager.packetBenchmarks[i];
+                if(!sleep && b.getTime() > 0L)
+                    System.out.println((new StringBuilder("Packet ")).append(i).append("[").append(PacketManager.packets[i].getClass().getSimpleName()).append("] took ").append(b.getTime()).append(" ms.").toString());
+                b.reset();
+            }
+
+            if(sleep)
+            {
+                Benchmarks.resetAll();
+                Thread.sleep(sleepTime);
+            } else
+            {
+                long cycle = 100L + Math.abs(sleepTime) / (long)(cycleRate / 100);
+                System.out.println((new StringBuilder("[WARNING]: Server load: ")).append(cycle).append("%!").toString());
+                Benchmarks.printAll();
+                Benchmarks.resetAll();
+                for(int i = 0; i < 5; i++)
+                    System.out.println("");
+
+            }
+            break MISSING_BLOCK_LABEL_266;
+        }
+        catch(Exception ex)
+        {
+            ex.printStackTrace();
+        }
+        cycleTimer.reset();
+        break MISSING_BLOCK_LABEL_273;
+        Exception exception;
+        exception;
+        cycleTimer.reset();
+        throw exception;
+        cycleTimer.reset();
+    }
+
+    private void initiateRestart()
+    {
+        Player aplayer[];
+        int j = (aplayer = World.getPlayers()).length;
+        for(int i = 0; i < j; i++)
+        {
+            Player player = aplayer[i];
+            if(player != null && player.getIndex() != -1)
+                player.getActionSender().sendUpdateServer(30);
+        }
+
+        (new ShutdownWorldProcess(30)).start();
+    }
+
+    private void startMinutesCounter()
+    {
+        try
+        {
+            BufferedReader minuteFile = new BufferedReader(new FileReader("./data/minutes.log"));
+            minutesCounter = Integer.parseInt(minuteFile.readLine());
+        }
+        catch(Exception e)
+        {
+            e.printStackTrace();
+        }
+        World.submit(new Tick(25) {
+
+            public void execute()
+            {
+                Server.setMinutesCounter(Server.getMinutesCounter() + 1L);
+                Player aplayer[];
+                int j = (aplayer = World.getPlayers()).length;
+                for(int i = 0; i < j; i++)
+                {
+                    Player player = aplayer[i];
+                    if(player != null)
+                    {
+                        player.getAllotment().doCalculations();
+                        player.getFlowers().doCalculations();
+                        player.getHerbs().doCalculations();
+                        player.getHops().doCalculations();
+                        player.getBushes().doCalculations();
+                        player.getTrees().doCalculations();
+                        player.getFruitTrees().doCalculations();
+                        player.getSpecialPlantOne().doCalculations();
+                        player.getSpecialPlantTwo().doCalculations();
+                        ItemManager.getInstance().lowerAllItemsTimers(player);
+                    }
+                }
+
+            }
+
+            final Server this$0;
+
+            
+            {
+                this$0 = Server.this;
+                super($anonymous0);
+            }
+        });
+    }
+
+    public static void setMinutesCounter(long minutesCounter)
+    {
+        minutesCounter = minutesCounter;
+        try
+        {
+            BufferedWriter minuteCounter = new BufferedWriter(new FileWriter("./data/minutes.log"));
+            minuteCounter.write(Long.toString(getMinutesCounter()));
+            minuteCounter.close();
+        }
+        catch(IOException e)
+        {
+            e.printStackTrace();
+        }
+    }
+
+    public static long getMinutesCounter()
+    {
+        return minutesCounter;
+    }
+
+    public static void setSingleton(Server singleton)
+    {
+        if(singleton != null)
+        {
+            throw new IllegalStateException("Singleton already set!");
+        } else
+        {
+            singleton = singleton;
+            return;
+        }
+    }
+
+    public static Server getSingleton()
+    {
+        return singleton;
+    }
+
+    public Selector getSelector()
+    {
+        return selector;
+    }
+
+    public int getPort()
+    {
+        return port;
+    }
+
+    private static Server singleton;
+    private final String host;
+    private final int port;
+    private final int cycleRate;
+    private static long minutesCounter;
+    public static GroupMiniGame castleWarsGroup = new GroupMiniGame(new CastleWarsCounter());
+    private Selector selector;
+    private InetSocketAddress address;
+    private ServerSocketChannel serverChannel;
+    private com.rs2.util.Misc.Stopwatch cycleTimer;
+    private final Queue loginQueue = new ConcurrentLinkedQueue();
+    private static final Queue disconnectedPlayers = new LinkedList();
+
+}
