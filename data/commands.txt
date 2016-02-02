@@ -42,3 +42,8 @@ Admin used npc 43
 Admin used npc 1765
 Admin used npc 1765
 Admin used debug Debug
+Admin used animation 715
+Admin used anim 714
+Admin used anm 715
+Admin used anim anim
+Admin used anim 715

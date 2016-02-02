@@ -722,7 +722,7 @@ public class Dialogues {
 					case 3 :
 						switch(optionId) {
 							case 1 :
-								player.getUpdateFlags().sendAnimation(714);
+								player.getUpdateFlags().sendAnimation(715);
 								player.getUpdateFlags().sendHighGraphic(301);
 								player.teleport(new Position(3551, 9693));
 								break;
